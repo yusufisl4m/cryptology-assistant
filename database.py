@@ -90,3 +90,9 @@ def get_users_tracking_coin(symbol):
     with sqlite3.connect(DB_NAME) as conn:
         res = conn.execute("SELECT user_id FROM alarm_list WHERE symbol = ?", (symbol,)).fetchall()
     return [r[0] for r in res]
+# --- MEVCUT BAKİYE SORGULAMA ---
+def get_single_coin_amount(user_id, symbol):
+    """Kullanıcının cüzdanındaki belirli bir coinin miktarını getirir"""
+    with sqlite3.connect(DB_NAME) as conn:
+        res = conn.execute("SELECT amount FROM wallet WHERE user_id = ? AND symbol = ?", (user_id, symbol.upper())).fetchone()
+    return res[0] if res else 0.0
