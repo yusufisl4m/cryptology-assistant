@@ -1,11 +1,11 @@
 import os
 import asyncio
 import logging
-import io # Resim dosyası işlemleri için
+import io
 from datetime import datetime
-import matplotlib.pyplot as plt # Grafik çizimi için
-import matplotlib.dates as mdates # Tarih formatı için
-from aiohttp import web
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from aiohttp import web # Render için Dummy Server
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
@@ -14,22 +14,23 @@ from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardB
 import aiohttp
 import database
 
-# --- RENDER İÇİN KRİTİK AYAR ---
-# Sunucuda ekran olmadığı için 'Agg' modunu kullanıyoruz. Yoksa hata verir.
-plt.switch_backend('Agg')
+# --- RENDER & MATPLOTLIB OPTİMİZASYONU ---
+plt.switch_backend('Agg') # Ekransız sunucu modu
 
 # 1. AYARLAR
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("KRİTİK HATA: BOT_TOKEN bulunamadı. .env dosyasını veya Render Environment Variables ayarlarını kontrol edin.")
 
-# Geçici Hafıza
+# Bellek Yönetimi (State)
 USER_STATES = {}
 TEMP_DATA = {} 
 
 # --- DİL SÖZLÜĞÜ ---
 TEXTS = {
     "tr": {
-        "welcome_title": "🏆 CRYPTOLOGY 🏆",
+        "welcome_title": "🏆 **CRYPTOLOGY** 🏆",
         "select_lang": "Lütfen dil seçiniz / Please select language:",
         "menu_msg": "Hoş geldiniz! Menü aşağıda sabitlenmiştir.",
         "btn_market": "📈 Piyasalar",
@@ -49,24 +50,24 @@ TEXTS = {
         "enter_symbol": "✍️ Lütfen Coin sembolünü yazın (Örn: BTC):",
         "enter_amount_add": "✍️ Eklenecek miktarı yazın (Örn: 0.5):",
         "enter_amount_del": "✍️ Çıkartılacak miktarı yazın (Örn: 0.2):",
-        "success_add": "✅ {} cüzdanınıza eklendi! (Yeni Bakiye: {})",
-        "success_del": "🗑️ {} cüzdanınızdan düşüldü! (Kalan: {})",
+        "success_add": "✅ **{}** cüzdanınıza eklendi! (Yeni Bakiye: {})",
+        "success_del": "🗑️ **{}** cüzdanınızdan düşüldü! (Kalan: {})",
         "success_update": "✅ Liste güncellendi: **{}**",
         "info_msg": (
             "ℹ️ **CRYPTOLOGY KULLANIM KILAVUZU**\n\n"
             "🔍 **Hızlı Fiyat & Grafik:**\n"
-            "Herhangi bir coinin grafiğini görmek için sohbet satırına /btc, /eth, /sol gibi komutlar yazın.\n\n"
+            "Herhangi bir coinin grafiğini görmek için sohbet satırına `/btc`, `/eth`, `/sol` gibi komutlar yazın.\n\n"
             "🎛 **Menü Özellikleri:**\n"
-            "• Piyasalar: Ayarlardan eklediğiniz favori coinlerinizi listeler.\n"
-            "• Cüzdanım: Varlıklarınızı hesaplar. (Ekleme/Çıkarma Ayarlar menüsünden yapılır)\n"
-            "• Alarmlar: Seçtiğiniz coinlerde %1 ani hareket olursa bildirir.\n"
+            "• **Piyasalar:** Ayarlardan eklediğiniz favori coinlerinizi listeler.\n"
+            "• **Cüzdanım:** Varlıklarınızı hesaplar. (Ekleme/Çıkarma Ayarlar menüsünden yapılır)\n"
+            "• **Alarmlar:** Seçtiğiniz coinlerde %1 ani hareket olursa bildirir.\n"
         ),
         "fng_title": "🧠 **PİYASA RUH HALİ**",
         "alarm_hit": "🚨 **ALARM: {}**\n{} %{:.2f}\n💰 Fiyat: ${}",
-        "chart_caption": "📊 {} - 24 Saatlik Grafik\n💰 Fiyat: ${:,.2f}"
+        "chart_caption": "📊 **{}** - 24 Saatlik Grafik\n💰 Fiyat: ${:,.2f}"
     },
     "en": {
-        "welcome_title": "🏆 CRYPTOLOGY 🏆",
+        "welcome_title": "🏆 **CRYPTOLOGY** 🏆",
         "select_lang": "Please select language:",
         "menu_msg": "Welcome! The menu is pinned below.",
         "btn_market": "📈 Markets",
@@ -86,20 +87,21 @@ TEXTS = {
         "enter_symbol": "✍️ Please type Coin symbol (e.g. BTC):",
         "enter_amount_add": "✍️ Enter amount to add (e.g. 0.5):",
         "enter_amount_del": "✍️ Enter amount to remove (e.g. 0.2):",
-        "success_add": "✅ {} added to wallet! (New Total: {})",
-        "success_del": "🗑️ {} removed from wallet! (Remaining: {})",
+        "success_add": "✅ **{}** added to wallet! (New Total: {})",
+        "success_del": "🗑️ **{}** removed from wallet! (Remaining: {})",
         "success_update": "✅ List updated: **{}**",
         "info_msg": (
             "ℹ️ **CRYPTOLOGY USER GUIDE**\n\n"
             "🔍 **Quick Price & Chart:**\n"
-            "Type commands like /btc, /eth to see instant price and 24h chart.\n\n"
-            "🎛 **Features:**\n""• Markets: Lists your favorite coins.\n"
-            "• Wallet: Calculates portfolio value.\n"
-            "• Alarms: Notifies on %1 price moves.\n"
+            "Type commands like `/btc`, `/eth` to see instant price and 24h chart.\n\n"
+            "🎛 **Features:**\n"
+            "• **Markets:** Lists your favorite coins.\n"
+            "• **Wallet:** Calculates portfolio value.\n"
+            "• **Alarms:** Notifies on %1 price moves.\n"
         ),
         "fng_title": "🧠 **MARKET SENTIMENT**",
         "alarm_hit": "🚨 **ALERT: {}**\n{} %{:.2f}\n💰 Price: ${}",
-        "chart_caption": "📊 {} - 24h Chart\n💰 Price: ${:,.2f}"
+        "chart_caption": "📊 **{}** - 24h Chart\n💰 Price: ${:,.2f}"
     }
 }
 
@@ -115,62 +117,63 @@ def get_t(user_id, key):
 
 async def get_price(symbol):
     try:
-        url = "https://api.binance.com/api/v3/ticker/price"
+        url = "https://data-api.binance.vision/api/v3/ticker/price"
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params={"symbol": f"{symbol.upper()}USDT"}) as resp:
-                if resp.status == 200: return float((await resp.json())['price'])
-    except: return None
+            async with session.get(url, params={"symbol": f"{symbol.upper()}USDT"}, timeout=5) as resp:
+                if resp.status == 200: 
+                    return float((await resp.json())['price'])
+    except Exception as e:
+        logging.warning(f"Fiyat çekme hatası ({symbol}): {e}")
+    return None
 
 async def get_fng():
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get("https://api.alternative.me/fng/?limit=1") as r:
+            async with s.get("https://api.alternative.me/fng/?limit=1", timeout=5) as r:
                 return (await r.json())['data'][0] if r.status == 200 else None
-    except: return None
+    except: 
+        return None
 
-# --- GRAFİK MOTORU ---
+# --- GRAFİK MOTORU (İŞ PARÇACIĞI İLE OPTİMİZE EDİLDİ) ---
+def _draw_chart_sync(times, prices, symbol):
+    """Bu senkron fonksiyon thread içinde çalışacak, botu kilitlemeyecek."""
+    plt.figure(figsize=(10, 5), facecolor='#1e1e1e')
+    ax = plt.axes()
+    ax.set_facecolor('#1e1e1e')
+    
+    color = '#00ff88' if prices[-1] >= prices[0] else '#ff4d4d'
+    plt.plot(times, prices, color=color, linewidth=2)
+    
+    plt.title(f"{symbol.upper()}/USDT (24h)", color='white', fontsize=14)
+    plt.grid(True, color='#333333', linestyle='--')
+    plt.xticks(color='white')
+    plt.yticks(color='white')
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
 async def generate_chart(symbol):
     try:
-        # Binance'den son 24 saatin verisini al (1 saatlik mumlar - 24 adet)
-        url = "https://api.binance.com/api/v3/klines"
+        url = "https://data-api.binance.vision/api/v3/klines"
         params = {"symbol": f"{symbol.upper()}USDT", "interval": "1h", "limit": 24}
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as resp:
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200: return None
                 data = await resp.json()
 
-        # Veriyi işle (Zaman ve Kapanış Fiyatı)
         prices = [float(x[4]) for x in data]
         times = [datetime.fromtimestamp(x[0]/1000) for x in data]
 
-        # Grafiği Çiz
-        plt.figure(figsize=(10, 5), facecolor='#1e1e1e') # Koyu tema arka plan
-        ax = plt.axes()
-        ax.set_facecolor('#1e1e1e')
-        
-        # Çizgi rengi (Yükseliş yeşil, düşüş kırmızı)
-        color = '#00ff88' if prices[-1] >= prices[0] else '#ff4d4d'
-        plt.plot(times, prices, color=color, linewidth=2)
-        
-        # Detaylar
-        plt.title(f"{symbol.upper()}/USDT (24h)", color='white', fontsize=14)
-        plt.grid(True, color='#333333', linestyle='--')
-        plt.xticks(color='white')
-        plt.yticks(color='white')
-        
-        # Tarih formatı
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        
-        # Resim olarak kaydet (RAM'e)
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
-        buf.seek(0)
-        plt.close() # Temizle
-        
+        # Çizim işlemini asenkron thread'e gönder (Botun donmasını engeller)
+        buf = await asyncio.to_thread(_draw_chart_sync, times, prices, symbol)
         return buf
     except Exception as e:
-        print(f"Chart Error: {e}")
+        logging.error(f"Grafik Hatası ({symbol}): {e}")
         return None
 
 # --- KLAVYELER ---
@@ -199,7 +202,7 @@ def action_kb(user_id, mode):
         [InlineKeyboardButton(text=t("back"), callback_data="back_settings")]
     ])
 
-# --- 1.BAŞLANGIÇ (/start) ---
+# --- 1. BAŞLANGIÇ (/start) ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer(TEXTS["tr"]["welcome_title"])
@@ -222,93 +225,80 @@ async def set_lang(call: CallbackQuery):
 @dp.message(F.text)
 async def reply_handler(message: Message):
     uid = message.from_user.id
-    txt = message.text
+    txt = message.text.strip()
     t = lambda k: get_t(uid, k)
     state = USER_STATES.get(uid)
     
     # --- DURUM YÖNETİMİ (VERİ GİRİŞİ) ---
     if state:
-        if txt.startswith("/"): return 
-        
-        # Piyasa & Alarm Ekleme/Çıkarma (Basit Liste)
-        if state in ["wait_market_add", "wait_alarm_add"]:
-            func = database.add_market_fav if "market" in state else database.add_alarm_fav
-            func(uid, txt)
-            await message.answer(t("success_update").format(txt.upper()))
-        
-        elif state in ["wait_market_del", "wait_alarm_del"]:
-            func = database.del_market_fav if "market" in state else database.del_alarm_fav
-            func(uid, txt)
-            await message.answer(t("success_update").format(txt.upper()))
-
-        # Cüzdan Sembolü Girişi
-        elif state == "wait_wallet_symbol":
-            TEMP_DATA[uid] = {"symbol": txt.upper()}
-            # Hangi moddayız? (Ekleme mi Çıkarma mı?)
-            mode = TEMP_DATA.get(f"{uid}_mode")
+        if txt.startswith("/"): 
+            USER_STATES[uid] = None # Komut girildiyse state'i iptal et
+        else:
+            if state in ["wait_market_add", "wait_alarm_add"]:
+                func = database.add_market_fav if "market" in state else database.add_alarm_fav
+                func(uid, txt)
+                await message.answer(t("success_update").format(txt.upper()))
             
-            if mode == "add":
-                USER_STATES[uid] = "wait_wallet_amount_add"
-                await message.answer(t("enter_amount_add"))
-            else:
-                USER_STATES[uid] = "wait_wallet_amount_del"
-                await message.answer(t("enter_amount_del"))
-            return 
+            elif state in ["wait_market_del", "wait_alarm_del"]:
+                func = database.del_market_fav if "market" in state else database.del_alarm_fav
+                func(uid, txt)
+                await message.answer(t("success_update").format(txt.upper()))
 
-        # Cüzdan Miktar Girişi (EKLEME)
-        elif state == "wait_wallet_amount_add":
-            try:
-                amount = float(txt)
-                symbol = TEMP_DATA[uid]["symbol"]
-                # Mevcut bakiyeyi al ve üzerine ekle
-                current = database.get_single_coin_amount(uid, symbol)
-                new_total = current + amount
+            elif state == "wait_wallet_symbol":
+                TEMP_DATA[uid] = {"symbol": txt.upper()}
+                mode = TEMP_DATA.get(f"{uid}_mode")
                 
-                database.update_wallet(uid, symbol, new_total)
-                await message.answer(t("success_add").format(symbol, new_total))
-            except:
-                await message.answer("❌ Invalid number!")
-        
-        # Cüzdan Miktar Girişi (ÇIKARMA)
-        elif state == "wait_wallet_amount_del":
-            try:
-                amount = float(txt)
-                symbol = TEMP_DATA[uid]["symbol"]
-                # Mevcut bakiyeden düş
-                current = database.get_single_coin_amount(uid, symbol)
-                new_total = current - amount
-                
-                if new_total < 0: new_total = 0 # Eksiye düşemez
-                
-                database.update_wallet(uid, symbol, new_total)
-                await message.answer(t("success_del").format(symbol, new_total))
-            except:
-                await message.answer("❌ Invalid number!")
+                if mode == "add":
+                    USER_STATES[uid] = "wait_wallet_amount_add"
+                    await message.answer(t("enter_amount_add"))
+                else:
+                    USER_STATES[uid] = "wait_wallet_amount_del"
+                    await message.answer(t("enter_amount_del"))
+                return 
 
-        USER_STATES[uid] = None # Durumu bitir
-        return
+            elif state == "wait_wallet_amount_add":
+                try:
+                    amount = float(txt)
+                    symbol = TEMP_DATA[uid]["symbol"]
+                    current = database.get_single_coin_amount(uid, symbol)
+                    new_total = current + amount
+                    database.update_wallet(uid, symbol, new_total)
+                    await message.answer(t("success_add").format(symbol, new_total))
+                except ValueError:
+                    await message.answer("❌ Geçersiz miktar! / Invalid number!")
+            
+            elif state == "wait_wallet_amount_del":
+                try:
+                    amount = float(txt)
+                    symbol = TEMP_DATA[uid]["symbol"]
+                    current = database.get_single_coin_amount(uid, symbol)
+                    new_total = max(0.0, current - amount) # Eksiye düşmeyi önle
+                    database.update_wallet(uid, symbol, new_total)
+                    await message.answer(t("success_del").format(symbol, new_total))
+                except ValueError:
+                    await message.answer("❌ Geçersiz miktar! / Invalid number!")
+
+            USER_STATES[uid] = None
+            return
 
     # --- KOMUT YAKALAYICI (/BTC vb.) ---
     if txt.startswith("/") and not txt.startswith("/start"):
-        symbol = txt[1:].upper() # "/" işaretini at
-        
-        # Kullanıcıya "Grafik çiziliyor..." mesajı ver
+        symbol = txt[1:].upper()
         wait_msg = await message.answer(f"🎨 {symbol} {t('fetching')}")
         
         price = await get_price(symbol)
         if price:
-            # Grafiği oluştur
             chart_img = await generate_chart(symbol)
-            if chart_img:# Resmi gönder
+            if chart_img:
                 await message.answer_photo(
                     BufferedInputFile(chart_img.read(), filename=f"{symbol}.png"),
                     caption=t("chart_caption").format(symbol, price)
                 )
-                await wait_msg.delete() # Bekleyiniz mesajını sil
+                await wait_msg.delete()
             else:
-                await wait_msg.edit_text(f"💰 {symbol}: ${price:,.2f} (No Chart)")
+                await wait_msg.edit_text(f"💰 **{symbol}:** ${price:,.2f} (Grafik yüklenemedi)")
         else:
-            await wait_msg.edit_text(t("fav_empty")) # Bulunamadı mesajı
+            await wait_msg.edit_text(t("not_found").format(symbol) if "not_found" in TEXTS["tr"] else f"❌ {symbol} bulunamadı.")
         return
 
     # --- MENÜ TIKLAMALARI ---
@@ -325,7 +315,7 @@ async def reply_handler(message: Message):
         report = f"{t('btn_market')}\n──────────────\n"
         for coin in favs:
             p = await get_price(coin)
-            report += f"🔹 {coin}: ${p:,.2f}\n" if p else f"⚠️ {coin}: --\n"
+            report += f"🔹 **{coin}:** ${p:,.4f}\n" if p else f"⚠️ {coin}: --\n"
         
         fng = await get_fng()
         if fng: report += f"\n{t('fng_title')}: {fng['value']} ({fng['value_classification']})"
@@ -345,9 +335,9 @@ async def reply_handler(message: Message):
             if p:
                 val = p * amt
                 total += val
-                report += f"💰 {sym}: {amt} (~${val:,.2f})\n"
+                report += f"💰 **{sym}:** {amt} (~${val:,.2f})\n"
         report += "──────────────\n"
-        report += f"💵 TOTAL: ${total:,.2f}"
+        report += f"💵 **TOTAL:** ${total:,.2f}"
         await msg.edit_text(report)
 
     elif txt in [TEXTS["tr"]["btn_alarm"], TEXTS["en"]["btn_alarm"]]:
@@ -364,7 +354,10 @@ async def conf_handler(call: CallbackQuery):
     if mode == "info":
         await call.message.edit_text(t("info_msg"), reply_markup=settings_kb(uid))
     elif mode == "lang":
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🇹🇷 Türkçe", callback_data="lang_tr"), InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en")]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇹🇷 Türkçe", callback_data="lang_tr"), 
+             InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en")]
+        ])
         await call.message.edit_text(t("select_lang"), reply_markup=kb)
     elif mode in ["market", "alarm", "wallet"]:
         items = []
@@ -388,7 +381,6 @@ async def action_handler(call: CallbackQuery):
     uid = call.from_user.id
     t = lambda k: get_t(uid, k)
     
-    # Hangi işlem yapılıyor kaydet (Add/Del)
     TEMP_DATA[f"{uid}_mode"] = action 
 
     if mode == "wallet":
@@ -402,16 +394,16 @@ async def action_handler(call: CallbackQuery):
 
 # --- 6. ARKA PLAN TARAYICI ---
 async def market_scanner():
-    print("👀 Sniper Aktif...")
+    logging.info("👀 Sniper Aktif...")
     while True:
         try:
             unique_coins = database.get_all_unique_alarms()
             if unique_coins:
                 for coin in unique_coins:
-                    url = "https://api.binance.com/api/v3/klines"
+                    url = "https://data-api.binance.vision/api/v3/klines"
                     params = {"symbol": f"{coin}USDT", "interval": "1m", "limit": 2}
                     async with aiohttp.ClientSession() as s:
-                        async with s.get(url, params=params) as r:
+                        async with s.get(url, params=params, timeout=5) as r:
                             if r.status == 200:
                                 data = await r.json()
                                 last = data[-1]
@@ -425,30 +417,38 @@ async def market_scanner():
                                         yon = "🚀" if change > 0 else "🔻"
                                         try: await bot.send_message(uid, t("alarm_hit").format(coin, yon, change, close_p))
                                         except: pass
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(1) # Rate limit koruması
             await asyncio.sleep(60)
-        except: await asyncio.sleep(60)
+        except Exception as e:
+            logging.error(f"Scanner Hatası: {e}")
+            await asyncio.sleep(60)
 
-# --- RENDER Fk ---
+# --- RENDER İÇİN SAHTE WEB SUNUCUSU (PORT KANDIRMACASI) ---
 async def handle(request):
-    return web.Response(text="Cryptology Bot is running smoothly! 🚀")
+    return web.Response(text="Cryptology Bot is running flawlessly! 🚀")
 
 async def main():
-    print("🚀 CRYPTOLOGY V7 (Render Port Fix) Started")
+    print("🚀 CRYPTOLOGY V8 (Optimized Master) Started")
+    
+    # 1. Arka plan tarayıcısını başlat
     asyncio.create_task(market_scanner())
     
-    # Render door
+    # 2. Render Sağlık Kontrolü (Dummy Server) Kurulumu
     app = web.Application()
     app.router.add_get('/', handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
+    
+    # Render'dan gelen PORT değişkenini al, bulamazsa 10000 yap
+    port = int(os.environ.get("PORT", 10000)) 
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"🌐 Render Dummy Server Aktif (Port: {port})")
+    logging.info(f"🌐 Render Dummy Server Aktif (Port: {port})")
 
-    # Asıl botu başlat
+    # 3. Asıl botu başlat
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
