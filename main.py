@@ -7,12 +7,18 @@ from aiogram.filters import Command
 import aiohttp
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-# Veritabanı modülümüzü çağırıyoruz
+# Veritabanı modülü çağırma
 import database
 
 # 1. Ayarları Yükle
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
+
+# --- SNIPER AYARLARI ---
+WATCHLIST = ["BTC", "ETH", "SOL", "XRP", "BNB", "DOGE", "ADA", "AVAX"]
+ALERT_THRESHOLD = 1.0  # %1 ve üzeri değişimde haber ver
+VOLUME_MULTIPLIER = 5.0  # Ortalama hacmin 5 katına çıkarsa haber ver
+ALARM_STATUS = True  # Başlangıçta alarmlar açık
 
 # 2. Loglama
 logging.basicConfig(level=logging.INFO)
@@ -58,12 +64,12 @@ async def cmd_start(message: Message):
         "Anlık takipler ve analizler parmaklarının ucunda! 🚀",
         reply_markup=keyboard
     )
-# --- BUTON TIKLAMA İŞLEYİCİSİ (GELİŞMİŞ) ---
+# --- BUTON TIKLAMA İŞLEYİCİSİ---
 @dp.callback_query()
 async def menu_handler(callback: CallbackQuery):
     action = callback.data
     
-    # Geri Dönme Butonu (Her ekranın altına koyacağız)
+    # Geri Dönme Butonu (Her ekranın altına koy)
     btn_back = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Ana Menü", callback_data="main_menu")]
     ])
@@ -78,7 +84,6 @@ async def menu_handler(callback: CallbackQuery):
             await callback.message.edit_text(text, reply_markup=btn_back)
             return
 
-        # Hesaplama yapılıyor efekti
         await callback.answer("Hesaplanıyor...") 
         
         total_value = 0.0
@@ -96,14 +101,13 @@ async def menu_handler(callback: CallbackQuery):
         report += "──────────────\n"
         report += f"💰 TOPLAM: ${total_value:,.2f}"
         
-        # Mesajı güncelle
         await callback.message.edit_text(report, reply_markup=btn_back)
 
     # 2. 📈 PİYASALAR BUTONU
     elif action == "menu_piyasa":
         await callback.answer("Veriler çekiliyor...")
         
-        # Örnek olarak 3 büyük coini çekelim
+        # Örnek 3 büyük coin
         btc = await get_binance_price("BTC")
         eth = await get_binance_price("ETH")
         bnb = await get_binance_price("BNB")
@@ -119,14 +123,30 @@ async def menu_handler(callback: CallbackQuery):
         )
         await callback.message.edit_text(market_text, reply_markup=btn_back)
 
-    # 3. 🔙 ANA MENÜYE DÖNÜŞ
-    elif action == "main_menu":
-        # /start komutundaki menüyü tekrar çağır
-        await cmd_start(callback.message)
+    # 3. ALARMLAR BUTONU 
+    elif action == "menu_alarm":
+        global ALARM_STATUS
+        # Durumu tersine çevir (Açıksa kapat, kapalıysa aç)
+        ALARM_STATUS = not ALARM_STATUS
+        
+        status_text = "🟢 AKTİF" if ALARM_STATUS else "🔴 KAPALI"
+        msg = (
+            f"📡 **SNIPER ALARM SİSTEMİ**\n"
+            f"──────────────\n"
+            f"Durum: **{status_text}**\n\n"
+            f"🔍 Takip Edilenler: {', '.join(WATCHLIST)}\n"
+            f"⚡ Fiyat Hassasiyeti: %{ALERT_THRESHOLD}\n"
+            f"🐋 Hacim Hassasiyeti: {VOLUME_MULTIPLIER}x Kat"
+        )
+        await callback.message.edit_text(msg, reply_markup=btn_back)
 
-    # 4. DİĞERLERİ
+    # 4. 🔙 ANA MENÜYE DÖNÜŞ
+    elif action == "main_menu":
+        await cmd_start(callback.message)
+    
+    # 5. AYARLAR (Henüz boş)
     else:
-        await callback.answer("🚧 Bu özellik (Alarm/Ayarlar) yakında eklenecek!", show_alert=True)
+        await callback.answer("🚧 Ayarlar menüsü yakında!", show_alert=True)
 
 # --- KOMUT: COİN EKLEME (/ekle BTC 0.5) ---
 @dp.message(Command("ekle"))
@@ -189,9 +209,84 @@ async def cmd_show_wallet(message: types.Message):
 
     await msg.edit_text(report)
 
+    # --- ARKA PLAN: PİYASA TARAYICISI ---
+async def market_scanner():
+    print("👀 Sniper Modu Başladı: Piyasalar taranıyor...")
+    
+    while True:
+        if ALARM_STATUS:
+            for coin in WATCHLIST:
+                try:
+                    # Binance'den son 15 dakikalık mum verilerini çek
+                    url = "https://api.binance.com/api/v3/klines"
+                    params = {
+                        "symbol": f"{coin}USDT",
+                        "interval": "1m",  # 1 dakikalık mumlar
+                        "limit": 15        # Son 15 mum
+                    }
+                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, params=params) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                # Veri Formatı: [Zaman, Açılış, Yüksek, Düşük, Kapanış, Hacim, ...]
+                                
+                                # Son kapanan mum (Tamamlanmış veri için sondan bir öncekine bak)
+                                last_candle = data[-2]
+                                open_price = float(last_candle[1])
+                                close_price = float(last_candle[4])
+                                current_volume = float(last_candle[5])
+                                
+                                # 1. FİYAT ALARMI HESAPLAMA
+                                change_percent = ((close_price - open_price) / open_price) * 100
+                                
+                                # 2. HACİM ALARMI HESAPLAMA
+                                # Önceki 14 mumun hacim ortalamasını al
+                                previous_volumes = [float(candle[5]) for candle in data[:-2]]
+                                avg_volume = sum(previous_volumes) / len(previous_volumes) if previous_volumes else 1
+                                
+                                # --- KONTROL MEKANİZMASI ---
+                                
+                                # Senaryo A: Ani Fiyat Hareketi
+                                if abs(change_percent) >= ALERT_THRESHOLD:
+                                    direction = "🚀 FIRLADI" if change_percent > 0 else "🔻 ÇAKILDI"
+                                    # Yöneticinin ID'sini .env dosyasından alıp mesaj salla
+                                    admin_id = os.getenv("ADMIN_ID") 
+                                    if admin_id:
+                                        await bot.send_message(
+                                            admin_id,
+                                            f"🚨 **PİYASA ALARMI: {coin}**\n"
+                                            f"──────────────\n"
+                                            f"{direction}: **%{change_percent:.2f}**\n"
+                                            f"💵 Fiyat: ${close_price}\n"
+                                            f"⏱️ Süre: Son 1 Dakika"
+                                        )
+
+                                # Senaryo B: Balina Hacmi (Whale Alert)
+                                elif current_volume > (avg_volume * VOLUME_MULTIPLIER):
+                                    admin_id = os.getenv("ADMIN_ID")
+                                    if admin_id:
+                                        await bot.send_message(
+                                            admin_id,
+                                            f"🐋 **BALİNA ALARMI: {coin}**\n"
+                                            f"──────────────\n"
+                                            f"📊 Hacim Patlaması: **{VOLUME_MULTIPLIER}x Kat**\n"
+                                            f"💵 Anlık Fiyat: ${close_price}"
+                                        )
+                                        
+                except Exception as e:
+                    print(f"Hata ({coin}): {e}")
+                
+                # Her coin arasında 1 saniye bekle (Binance banlama)
+                await asyncio.sleep(1)# Tüm listeyi taradıktan sonra 60 saniye dinlen
+        await asyncio.sleep(60)
+
 # --- ANA ÇALIŞTIRMA ---
 async def main():
-    print("🚀 Cryptology (V2 - Cüzdan Modu) Aktif")
+    print("🚀 Cryptology (V3 - Snip Modu) Aktif")
+    await dp.start_polling(bot)
+    asyncio.create_task(market_scanner())
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
