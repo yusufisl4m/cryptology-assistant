@@ -5,6 +5,7 @@ import io # Resim dosyası işlemleri için
 from datetime import datetime
 import matplotlib.pyplot as plt # Grafik çizimi için
 import matplotlib.dates as mdates # Tarih formatı için
+from aiohttp import web
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
@@ -428,9 +429,25 @@ async def market_scanner():
             await asyncio.sleep(60)
         except: await asyncio.sleep(60)
 
+# --- RENDER Fk ---
+async def handle(request):
+    return web.Response(text="Cryptology Bot is running smoothly! 🚀")
+
 async def main():
-    print("🚀 CRYPTOLOGY V6 (Charts & Wallet Fix) Started")
+    print("🚀 CRYPTOLOGY V7 (Render Port Fix) Started")
     asyncio.create_task(market_scanner())
+    
+    # Render door
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"🌐 Render Dummy Server Aktif (Port: {port})")
+
+    # Asıl botu başlat
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
