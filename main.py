@@ -53,29 +53,81 @@ async def cmd_start(message: Message):
 
     # 3. Mesajı Gönder
     await message.answer(
-        "👋 **Merhaba Cryptology!**\n\n"
+        "👋**Merhaba Ben Cryptology! **⚡\n\n"
         "Yatırımlarını yönetmek için aşağıdaki menüyü kullanabilirsin. "
         "Anlık takipler ve analizler parmaklarının ucunda! 🚀",
         reply_markup=keyboard
     )
-# --- BUTON TIKLAMA İŞLEYİCİSİ ---
+# --- BUTON TIKLAMA İŞLEYİCİSİ (GELİŞMİŞ) ---
 @dp.callback_query()
 async def menu_handler(callback: CallbackQuery):
-    action = callback.data # Tıklanan butonun kimliği (örn: menu_cuzdan)
+    action = callback.data
+    
+    # Geri Dönme Butonu (Her ekranın altına koyacağız)
+    btn_back = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Ana Menü", callback_data="main_menu")]
+    ])
 
+    # 1. 👛 CÜZDANIM BUTONU
     if action == "menu_cuzdan":
-        # Eğer Cüzdanım'a bastıysa cüzdan komutunu çalıştır (İleride bağlayacağız)
-        await callback.answer("👛 Cüzdan moduna geçiliyor...")
-        await callback.message.answer("Cüzdanın için: /cuzdan komutunu kullanabilirsin!")
+        user_id = callback.from_user.id
+        coins = database.get_wallet(user_id)
+
+        if not coins:
+            text = "📭 Cüzdanın boş! /ekle BTC 0.5 yazarak coin ekleyebilirsin."
+            await callback.message.edit_text(text, reply_markup=btn_back)
+            return
+
+        # Hesaplama yapılıyor efekti
+        await callback.answer("Hesaplanıyor...") 
         
+        total_value = 0.0
+        report = "💼 **PORTFÖYÜN**\n──────────────\n"
+
+        for symbol, amount in coins:
+            price = await get_binance_price(symbol)
+            if price > 0:
+                value = price * amount
+                total_value += value
+                report += f"🔹 {symbol}: {amount} adet (~${value:,.2f})\n"
+            else:
+                report += f"⚠️ {symbol}: Fiyat alınamadı\n"
+
+        report += "──────────────\n"
+        report += f"💰 TOPLAM: ${total_value:,.2f}"
+        
+        # Mesajı güncelle
+        await callback.message.edit_text(report, reply_markup=btn_back)
+
+    # 2. 📈 PİYASALAR BUTONU
     elif action == "menu_piyasa":
-        await callback.answer("📈 Piyasa verileri yükleniyor...")
-        await callback.message.answer("Hangi coine bakmak istersin? Örn: `/btc`")
+        await callback.answer("Veriler çekiliyor...")
         
+        # Örnek olarak 3 büyük coini çekelim
+        btc = await get_binance_price("BTC")
+        eth = await get_binance_price("ETH")
+        bnb = await get_binance_price("BNB")
+        
+        market_text = (
+            "📊 **PİYASA ÖZETİ**\n"
+            "──────────────\n"
+            f"👑 BTC: ${btc:,.2f}\n"
+            f"💎 ETH: ${eth:,.2f}\n"
+            f"🔶 BNB: ${bnb:,.2f}\n"
+            "──────────────\n"
+            "💡 *Daha fazlası için: /btc gibi komutlar kullanabilirsin.*"
+        )
+        await callback.message.edit_text(market_text, reply_markup=btn_back)
+
+    # 3. 🔙 ANA MENÜYE DÖNÜŞ
+    elif action == "main_menu":
+        # /start komutundaki menüyü tekrar çağır
+        await cmd_start(callback.message)
+
+    # 4. DİĞERLERİ
     else:
-        # Diğer butonlar (Alarm, Ayarlar) için şimdilik boş dön
-        await callback.answer("🚧 Bu özellik geliştirme aşamasında!", show_alert=True)
-        
+        await callback.answer("🚧 Bu özellik (Alarm/Ayarlar) yakında eklenecek!", show_alert=True)
+
 # --- KOMUT: COİN EKLEME (/ekle BTC 0.5) ---
 @dp.message(Command("ekle"))
 async def cmd_add_coin(message: types.Message):
