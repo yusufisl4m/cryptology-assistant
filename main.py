@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import aiohttp
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # Veritabanı modülümüzü çağırıyoruz
 import database
@@ -33,7 +34,48 @@ async def get_binance_price(symbol):
                 data = await response.json()
                 return float(data['price'])
             return 0.0
+# --- KOMUT: BAŞLANGIÇ (/start) ---
+@dp.message(Command("start"))
+# --- KOMUT: BAŞLANGIÇ (/start) ---
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    # 1. Butonları Tanımla
+    btn_piyasa = InlineKeyboardButton(text="📈 Piyasalar", callback_data="menu_piyasa")
+    btn_cuzdan = InlineKeyboardButton(text="👛 Cüzdanım", callback_data="menu_cuzdan")
+    btn_alarm  = InlineKeyboardButton(text="🚨 Alarmlar", callback_data="menu_alarm")
+    btn_ayar   = InlineKeyboardButton(text="⚙️ Ayarlar", callback_data="menu_ayar")
 
+    # 2. Düzeni Oluştur (Satır Satır)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [btn_piyasa, btn_cuzdan],  # İlk satır
+        [btn_alarm, btn_ayar]      # İkinci satır
+    ])
+
+    # 3. Mesajı Gönder
+    await message.answer(
+        "👋 **Merhaba Cryptology!**\n\n"
+        "Yatırımlarını yönetmek için aşağıdaki menüyü kullanabilirsin. "
+        "Anlık takipler ve analizler parmaklarının ucunda! 🚀",
+        reply_markup=keyboard
+    )
+# --- BUTON TIKLAMA İŞLEYİCİSİ ---
+@dp.callback_query()
+async def menu_handler(callback: CallbackQuery):
+    action = callback.data # Tıklanan butonun kimliği (örn: menu_cuzdan)
+
+    if action == "menu_cuzdan":
+        # Eğer Cüzdanım'a bastıysa cüzdan komutunu çalıştır (İleride bağlayacağız)
+        await callback.answer("👛 Cüzdan moduna geçiliyor...")
+        await callback.message.answer("Cüzdanın için: /cuzdan komutunu kullanabilirsin!")
+        
+    elif action == "menu_piyasa":
+        await callback.answer("📈 Piyasa verileri yükleniyor...")
+        await callback.message.answer("Hangi coine bakmak istersin? Örn: `/btc`")
+        
+    else:
+        # Diğer butonlar (Alarm, Ayarlar) için şimdilik boş dön
+        await callback.answer("🚧 Bu özellik geliştirme aşamasında!", show_alert=True)
+        
 # --- KOMUT: COİN EKLEME (/ekle BTC 0.5) ---
 @dp.message(Command("ekle"))
 async def cmd_add_coin(message: types.Message):
